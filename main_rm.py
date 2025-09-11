@@ -168,10 +168,10 @@ def train_and_predict(df):
         global_value.logger(f"⏭️ Skipping trade due to RSI ({rsi:.2f}) being overbought/oversold.", "INFO")
         return None
 
-    # Add trend check: skip if current trend != past trend
-    if current_trend == past_trend:
-        global_value.logger(f"⏭️ Skipping trade due to flat trend (current: {current_trend}, past: {past_trend})", "INFO")
-        return None
+    # # Add trend check: skip if current trend != past trend
+    # if current_trend == past_trend:
+    #     global_value.logger(f"⏭️ Skipping trade due to flat trend (current: {current_trend}, past: {past_trend})", "INFO")
+    #     return None
 
     if call_conf > PROB_THRESHOLD:
         if latest_dir == 1 and latest_pivot_high is not None and current_price < latest_pivot_high:
@@ -295,5 +295,6 @@ def main_trading_loop():
 
 if __name__ == "__main__":
     main_trading_loop()
+
 
 
