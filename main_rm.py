@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 from pocketoptionapi.stable_api import PocketOption
 import pocketoptionapi.global_value as global_value
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.linear_model import LogisticRegression  # Add this import
 import oandapyV20
 import oandapyV20.endpoints.instruments as instruments
 
@@ -22,37 +23,50 @@ demo = True
 
 # Bot Settings
 min_payout = 80
-period = 60  
+period = 60
 expiration = 60
 INITIAL_AMOUNT = 1
 MARTINGALE_LEVEL = 3
-PROB_THRESHOLD = 0.6
+PROB_THRESHOLD = 0.65
 
 api = PocketOption(ssid, demo)
 api.connect()
-time.sleep(4)
+time.sleep(5)
 
 FEATURE_COLS = ['RSI', 'k_percent', 'r_percent', 'MACD', 'MACD_EMA', 'Price_Rate_Of_Change']
 
-def get_oanda_candles(pair, granularity="M1", count=500):
-    try:
-        client = oandapyV20.API(access_token=ACCESS_TOKEN)
-        params = {"granularity": granularity, "count": count}
-        r = instruments.InstrumentsCandles(instrument=pair, params=params)
-        client.request(r)
-        candles = r.response['candles']
-        df = pd.DataFrame([{
-            'time': c['time'],
-            'open': float(c['mid']['o']),
-            'high': float(c['mid']['h']),
-            'low': float(c['mid']['l']),
-            'close': float(c['mid']['c']),
-        } for c in candles])
-        df['time'] = pd.to_datetime(df['time'])
-        return df
-    except Exception as e:
-        global_value.logger(f"[ERROR]: OANDA candle fetch failed for {pair} - {str(e)}", "ERROR")
-        return None
+def get_oanda_candles(pair, granularity="M1", count=500, retries=3, delay=1):
+    client = oandapyV20.API(access_token=ACCESS_TOKEN)
+    params = {"granularity": granularity, "count": count}
+
+    for attempt in range(1, retries + 1):
+        try:
+            r = instruments.InstrumentsCandles(instrument=pair, params=params)
+            client.request(r)
+
+            if "candles" not in r.response:
+                raise ValueError("No candle data in response")
+
+            candles = r.response['candles']
+            df = pd.DataFrame([{
+                'time': c['time'],
+                'open': float(c['mid']['o']),
+                'high': float(c['mid']['h']),
+                'low': float(c['mid']['l']),
+                'close': float(c['mid']['c']),
+            } for c in candles])
+
+            df['time'] = pd.to_datetime(df['time'])
+            return df
+
+        except Exception as e:
+            global_value.logger(
+                f"[ERROR]: OANDA candle fetch failed for {pair} (attempt {attempt}/{retries})",
+                "ERROR"
+            )
+            time.sleep(delay)
+
+    return None
 
 def get_payout():
     try:
@@ -92,14 +106,34 @@ def prepare_data(df):
 
     df['Prediction'] = (df['close'].shift(-1) > df['close']).astype(int)
     df.dropna(inplace=True)
+    df.reset_index(drop=True, inplace=True)  # <-- Add this line
     return df
+
+def pivotid(df1, l, n1, n2):
+    if l - n1 < 0 or l + n2 >= len(df1):
+        return 0
+    pividlow = 1
+    pividhigh = 1
+    for i in range(l - n1, l + n2 + 1):
+        if df1.low[l] > df1.low[i]:
+            pividlow = 0
+        if df1.high[l] < df1.high[i]:
+            pividhigh = 0
+    if pividlow and pividhigh:
+        return 3
+    elif pividlow:
+        return 1
+    elif pividhigh:
+        return 2
+    else:
+        return 0
 
 def train_and_predict(df):
     X_train = df[FEATURE_COLS].iloc[:-1]
     y_train = df['Prediction'].iloc[:-1]
 
-    global_value.logger("📊 Latest data preview:\n" + str(df.shape), "INFO")
-    model = RandomForestClassifier(n_estimators=100, oob_score=True, criterion="gini", random_state=0)
+    # Use Logistic Regression instead of Random Forest
+    model = LogisticRegression(max_iter=1000, random_state=0)
     model.fit(X_train, y_train)
 
     X_test = df[FEATURE_COLS].iloc[[-1]]
@@ -112,26 +146,48 @@ def train_and_predict(df):
     past_trend = df.iloc[-3]['SUPERT_10_3.0']
     rsi = df.iloc[-1]['RSI']
 
+    # Calculate pivots
+    df['pivot'] = df.apply(lambda x: pivotid(df, x.name, 10, 10), axis=1)
+    # Find last pivot high before current candle
+    pivot_highs = df[df['pivot'] == 2]
+    if not pivot_highs.empty:
+        latest_pivot_high = pivot_highs.iloc[-1]['high']
+    else:
+        latest_pivot_high = None
+    # Find last pivot low before current candle
+    pivot_lows = df[df['pivot'] == 1]
+    if not pivot_lows.empty:
+        latest_pivot_low = pivot_lows.iloc[-1]['low']
+    else:
+        latest_pivot_low = None
+
+    current_price = df.iloc[-1]['close']
+
     # Prevent trading in overbought/oversold markets
     if rsi > 70 or rsi < 30:
         global_value.logger(f"⏭️ Skipping trade due to RSI ({rsi:.2f}) being overbought/oversold.", "INFO")
         return None
 
+    # Add trend check: skip if current trend != past trend
+    if current_trend == past_trend:
+        global_value.logger(f"⏭️ Skipping trade due to flat trend (current: {current_trend}, past: {past_trend})", "INFO")
+        return None
+
     if call_conf > PROB_THRESHOLD:
-        if latest_dir == 1 and current_trend != past_trend:
+        if latest_dir == 1 and latest_pivot_high is not None and current_price < latest_pivot_high:
             decision = "call"
             emoji = "🟢"
             confidence = call_conf
         else:
-            global_value.logger(f"⏭️ Skipping CALL ({call_conf:.2%}) due to trend mismatch or flat Supertrend.", "INFO")
+            global_value.logger(f"⏭️ Skipping CALL ({call_conf:.2%}) due to trend mismatch or price above pivot high.", "INFO")
             return None
     elif put_conf > PROB_THRESHOLD:
-        if latest_dir == -1 and current_trend != past_trend:
+        if latest_dir == -1 and latest_pivot_low is not None and current_price > latest_pivot_low:
             decision = "put"
             emoji = "🔴"
             confidence = put_conf
         else:
-            global_value.logger(f"⏭️ Skipping PUT ({put_conf:.2%}) due to trend mismatch or flat Supertrend.", "INFO")
+            global_value.logger(f"⏭️ Skipping PUT ({put_conf:.2%}) due to trend mismatch or price below pivot low.", "INFO")
             return None
     else:
         if call_conf > put_conf:
@@ -180,7 +236,7 @@ def martingale_strategy(pair, action):
     else:
         global_value.logger("LOSS. Resetting.", "INFO")
 
-def wait_until_next_candle(period_seconds=300, seconds_before=15):
+def wait_until_next_candle(period_seconds=300, seconds_before=30):
     while True:
         now = datetime.now(timezone.utc)
         next_candle = ((now.timestamp() // period_seconds) + 1) * period_seconds
@@ -204,8 +260,8 @@ def main_trading_loop():
             time.sleep(5)
             continue
 
-        wait_until_next_candle(period_seconds=period, seconds_before=15)
-        global_value.logger("🕒 15 seconds before candle. Preparing data and predictions...", "INFO")
+        wait_until_next_candle(period_seconds=period, seconds_before=30)
+        global_value.logger("🕒 30 seconds before candle. Preparing data and predictions...", "INFO")
 
         selected_pair = None
         selected_action = None
@@ -239,3 +295,5 @@ def main_trading_loop():
 
 if __name__ == "__main__":
     main_trading_loop()
+
+
