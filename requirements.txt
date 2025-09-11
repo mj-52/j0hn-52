@@ -1,0 +1,13 @@
+pandas-ta
+scikit-learn
+python-dotenv
+oandapyV20
+websocket-client
+requests
+python-dateutil
+tzlocal
+websockets
+colorama
+xgboost
+
+
