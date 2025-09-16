@@ -104,24 +104,24 @@ def prepare_data(df):
     df.reset_index(drop=True, inplace=True) 
     return df
 
-def pivotid(df1, l, n1, n2):
-    if l - n1 < 0 or l + n2 >= len(df1):
-        return 0
-    pividlow = 1
-    pividhigh = 1
-    for i in range(l - n1, l + n2 + 1):
-        if df1.low[l] > df1.low[i]:
-            pividlow = 0
-        if df1.high[l] < df1.high[i]:
-            pividhigh = 0
-    if pividlow and pividhigh:
-        return 3
-    elif pividlow:
-        return 1
-    elif pividhigh:
-        return 2
-    else:
-        return 0
+# def pivotid(df1, l, n1, n2):
+#     if l - n1 < 0 or l + n2 >= len(df1):
+#         return 0
+#     pividlow = 1
+#     pividhigh = 1
+#     for i in range(l - n1, l + n2 + 1):
+#         if df1.low[l] > df1.low[i]:
+#             pividlow = 0
+#         if df1.high[l] < df1.high[i]:
+#             pividhigh = 0
+#     if pividlow and pividhigh:
+#         return 3
+#     elif pividlow:
+#         return 1
+#     elif pividhigh:
+#         return 2
+#     else:
+#         return 0
 
 def train_and_predict(df):
     X_train = df[FEATURE_COLS].iloc[:-1]
@@ -141,22 +141,22 @@ def train_and_predict(df):
     past_trend = df.iloc[-3]['SUPERT_10_3.0']
     rsi = df.iloc[-1]['RSI']
 
-    # Calculate pivots
-    df['pivot'] = df.apply(lambda x: pivotid(df, x.name, 10, 10), axis=1)
-    # Find last pivot high before current candle
-    pivot_highs = df[df['pivot'] == 2]
-    if not pivot_highs.empty:
-        latest_pivot_high = pivot_highs.iloc[-1]['high']
-    else:
-        latest_pivot_high = None
-    # Find last pivot low before current candle
-    pivot_lows = df[df['pivot'] == 1]
-    if not pivot_lows.empty:
-        latest_pivot_low = pivot_lows.iloc[-1]['low']
-    else:
-        latest_pivot_low = None
+    # # Calculate pivots
+    # df['pivot'] = df.apply(lambda x: pivotid(df, x.name, 10, 10), axis=1)
+    # # Find last pivot high before current candle
+    # pivot_highs = df[df['pivot'] == 2]
+    # if not pivot_highs.empty:
+    #     latest_pivot_high = pivot_highs.iloc[-1]['high']
+    # else:
+    #     latest_pivot_high = None
+    # # Find last pivot low before current candle
+    # pivot_lows = df[df['pivot'] == 1]
+    # if not pivot_lows.empty:
+    #     latest_pivot_low = pivot_lows.iloc[-1]['low']
+    # else:
+    #     latest_pivot_low = None
 
-    current_price = df.iloc[-1]['close']
+    # current_price = df.iloc[-1]['close']
 
     # Prevent trading in overbought/oversold markets
     if rsi > 70 or rsi < 30:
@@ -195,41 +195,30 @@ def train_and_predict(df):
     return decision
 
 def perform_trade(amount, pair, action, expiration):
-    result = api.buy(amount=amount, active=pair, action=action, expirations=expiration)
-    trade_id = result[1]
+    """
+    Submit a single trade and do not wait for result. Returns trade id on success, None on failure.
+    """
+    try:
+        result = api.buy(amount=amount, active=pair, action=action, expirations=expiration)
+        trade_id = result[1]
 
-    if result[0] is False or trade_id is None:
-        global_value.logger("❗Trade failed to execute. Attempting reconnection...", "ERROR")
-        api.disconnect()
-        time.sleep(2)
-        api.connect()
+        if result[0] is False or trade_id is None:
+            global_value.logger("❗Trade failed to execute. Attempting reconnection...", "ERROR")
+            api.disconnect()
+            time.sleep(2)
+            api.connect()
+            return None
+
+        return trade_id
+    except Exception as e:
+        global_value.logger(f"[ERROR]: Exception while placing trade - {e}", "ERROR")
+        try:
+            api.disconnect()
+            time.sleep(2)
+            api.connect()
+        except:
+            pass
         return None
-
-    time.sleep(expiration)
-    return api.check_win(trade_id)
-
-def martingale_strategy(pair, action):
-    global current_profit
-
-    amount = INITIAL_AMOUNT
-    level = 1
-    result = perform_trade(amount, pair, action, expiration)
-
-    if result is None:
-        return
-
-    while result[1] == 'loose' and level < MARTINGALE_LEVEL:
-        level += 1
-        amount *= 2
-        result = perform_trade(amount, pair, action, expiration)
-
-        if result is None:
-            return
-        
-    if result[1] != 'loose':
-        global_value.logger("WIN - Resetting to base amount.", "INFO")
-    else:
-        global_value.logger("LOSS. Resetting.", "INFO")
 
 def wait_until_next_candle(period_seconds=300, seconds_before=5):
     while True:
@@ -281,12 +270,11 @@ def main_trading_loop():
 
         if selected_pair and selected_action:
             global_value.logger(f"🚀 Executing trade on {selected_pair} - {selected_action.upper()}", "INFO")
-            martingale_strategy(selected_pair, selected_action)
+            trade_id = perform_trade(INITIAL_AMOUNT, selected_pair, selected_action, expiration)
         else:
             global_value.logger("⛔ No valid trading signal this cycle.", "INFO")
 
-        # Optional: small pause before starting next cycle
-        time.sleep(2)
+        time.sleep(1)
 
 if __name__ == "__main__":
     main_trading_loop()
