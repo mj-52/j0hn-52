@@ -22,7 +22,7 @@ demo = True
 
 # Bot Settings
 min_payout = 80
-period = 60
+period = 300
 expiration = 60
 INITIAL_AMOUNT = 1
 MARTINGALE_LEVEL = 3
@@ -281,6 +281,7 @@ def main_trading_loop():
 
 if __name__ == "__main__":
     main_trading_loop()
+
 
 
 
