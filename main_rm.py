@@ -5,10 +5,9 @@ import pandas as pd
 import pandas_ta as ta 
 from datetime import datetime, timezone
 from dotenv import load_dotenv
-import xgboost as xgb
 from pocketoptionapi.stable_api import PocketOption
 import pocketoptionapi.global_value as global_value
-from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
 import oandapyV20
 import oandapyV20.endpoints.instruments as instruments
 
@@ -93,7 +92,7 @@ def prepare_data(df):
 
     df['Prediction'] = (df['close'].shift(-1) > df['close']).astype(int)
     df.dropna(inplace=True)
-    df.reset_index(drop=True, inplace=True)  # <-- Add this line
+    df.reset_index(drop=True, inplace=True)
     return df
 
 def pivotid(df1, l, n1, n2):
@@ -119,8 +118,16 @@ def train_and_predict(df):
     X_train = df[FEATURE_COLS].iloc[:-1]
     y_train = df['Prediction'].iloc[:-1]
 
-    # global_value.logger("📊 Latest data preview:\n" + str(df.shape), "INFO")
-    model = xbg()
+    # XGBoost Classifier with optimized parameters
+    model = XGBClassifier(
+        n_estimators=100,
+        max_depth=6,
+        learning_rate=0.1,
+        random_state=0,
+        use_label_encoder=False,
+        eval_metric='logloss',
+        tree_method='hist'
+    )
     model.fit(X_train, y_train)
 
     X_test = df[FEATURE_COLS].iloc[[-1]]
@@ -282,5 +289,3 @@ def main_trading_loop():
 
 if __name__ == "__main__":
     main_trading_loop()
-
-
