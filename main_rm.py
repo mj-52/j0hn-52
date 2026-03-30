@@ -5,6 +5,7 @@ import pandas as pd
 import pandas_ta as ta 
 from datetime import datetime, timezone
 from dotenv import load_dotenv
+import xgboost as xgb
 from pocketoptionapi.stable_api import PocketOption
 import pocketoptionapi.global_value as global_value
 from sklearn.ensemble import RandomForestClassifier
@@ -119,7 +120,7 @@ def train_and_predict(df):
     y_train = df['Prediction'].iloc[:-1]
 
     # global_value.logger("📊 Latest data preview:\n" + str(df.shape), "INFO")
-    model = RandomForestClassifier(n_estimators=100, oob_score=True, criterion="gini", random_state=0)
+    model = xbg()
     model.fit(X_train, y_train)
 
     X_test = df[FEATURE_COLS].iloc[[-1]]
